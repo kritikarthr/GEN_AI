@@ -1,16 +1,35 @@
+
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Calendar, MapPin, Users, DollarSign, Sparkles, Loader2 } from "lucide-react"
+import {
+  Calendar,
+  MapPin,
+  Users,
+  DollarSign,
+  Sparkles,
+  Loader2,
+} from "lucide-react"
 import { useRouter } from "next/navigation"
 
 const popularActivities = [
@@ -32,16 +51,37 @@ const popularActivities = [
 ]
 
 const travelStyles = [
-  { value: "budget", label: "Budget Traveler", description: "Maximize experiences, minimize costs" },
-  { value: "balanced", label: "Balanced Explorer", description: "Mix of comfort and adventure" },
-  { value: "luxury", label: "Luxury Seeker", description: "Premium experiences and comfort" },
-  { value: "adventure", label: "Adventure Enthusiast", description: "Thrilling and active experiences" },
-  { value: "cultural", label: "Cultural Immersion", description: "Deep local cultural experiences" },
+  {
+    value: "budget",
+    label: "Budget Traveler",
+    description: "Maximize experiences, minimize costs",
+  },
+  {
+    value: "balanced",
+    label: "Balanced Explorer",
+    description: "Mix of comfort and adventure",
+  },
+  {
+    value: "luxury",
+    label: "Luxury Seeker",
+    description: "Premium experiences and comfort",
+  },
+  {
+    value: "adventure",
+    label: "Adventure Enthusiast",
+    description: "Thrilling and active experiences",
+  },
+  {
+    value: "cultural",
+    label: "Cultural Immersion",
+    description: "Deep local cultural experiences",
+  },
 ]
 
 export default function CreateItinerary() {
   const router = useRouter()
   const [isGenerating, setIsGenerating] = useState(false)
+
   const [formData, setFormData] = useState({
     destination: "",
     startDate: "",
@@ -65,6 +105,78 @@ export default function CreateItinerary() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    const destination = formData.destination.trim()
+    const budget = Number(formData.budget)
+    const groupSize = Number(formData.groupSize)
+
+    if (!destination) {
+      alert("Please enter a destination.")
+      return
+    }
+
+    if (!formData.startDate || !formData.endDate) {
+      alert("Please select both travel dates.")
+      return
+    }
+
+    const start = new Date(`${formData.startDate}T00:00:00`)
+    const end = new Date(`${formData.endDate}T00:00:00`)
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      alert("Please enter valid travel dates.")
+      return
+    }
+
+    if (start < today) {
+      alert("The start date cannot be in the past.")
+      return
+    }
+
+    if (end <= start) {
+      alert("The end date must be after the start date.")
+      return
+    }
+
+    if (!Number.isFinite(budget) || budget <= 0) {
+      alert("Please enter a budget greater than zero.")
+      return
+    }
+
+    if (!Number.isInteger(groupSize) || groupSize < 1 || groupSize > 8) {
+      alert("Group size must be between 1 and 8 people.")
+      return
+    }
+
+    const duration = Math.ceil(
+      (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+    )
+
+    const dailyBudget = budget / groupSize / duration
+
+    const wantsLuxury =
+      formData.travelStyle === "luxury" ||
+      formData.accommodation === "luxury"
+
+    if (wantsLuxury && dailyBudget < 100) {
+      const proceed = window.confirm(
+        `Your budget is about $${dailyBudget.toFixed(2)} per person per day. ` +
+          "Luxury travel may exceed this budget. Continue anyway?"
+      )
+
+      if (!proceed) return
+    } else if (dailyBudget < 25) {
+      const proceed = window.confirm(
+        `Your budget is about $${dailyBudget.toFixed(2)} per person per day. ` +
+          "This may be insufficient for some destinations. Continue anyway?"
+      )
+
+      if (!proceed) return
+    }
+
     setIsGenerating(true)
 
     try {
@@ -74,11 +186,11 @@ export default function CreateItinerary() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          destination: formData.destination,
+          destination,
           startDate: formData.startDate,
           endDate: formData.endDate,
-          budget: Number.parseInt(formData.budget),
-          groupSize: Number.parseInt(formData.groupSize),
+          budget,
+          groupSize,
           preferences: {
             activities: formData.activities,
             travelStyle: formData.travelStyle,
@@ -90,13 +202,16 @@ export default function CreateItinerary() {
 
       const data = await response.json()
 
-      if (data.success) {
+      if (response.ok && data.success && data.id) {
         router.push(`/itinerary/${data.id}`)
       } else {
-        alert("Failed to generate itinerary. Please try again.")
+        alert(
+          data.error ||
+            "Failed to generate itinerary. Please try again."
+        )
       }
     } catch (error) {
-      console.error("Error:", error)
+      console.error("Error generating itinerary:", error)
       alert("An error occurred. Please try again.")
     } finally {
       setIsGenerating(false)
@@ -107,24 +222,38 @@ export default function CreateItinerary() {
     if (formData.startDate && formData.endDate) {
       const start = new Date(formData.startDate)
       const end = new Date(formData.endDate)
-      const duration = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+
+      const duration = Math.ceil(
+        (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+      )
+
       return duration > 0 ? duration : 0
     }
+
     return 0
   }
 
   const duration = calculateDuration()
+
   const dailyBudget =
     formData.budget && duration > 0
-      ? Math.round(Number.parseInt(formData.budget) / Number.parseInt(formData.groupSize) / duration)
+      ? Math.round(
+          Number(formData.budget) /
+            Number(formData.groupSize) /
+            duration
+        )
       : 0
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-cyan-50 to-blue-50 py-8">
       <div className="container mx-auto px-4 max-w-4xl">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Create Your Perfect Itinerary</h1>
-          <p className="text-xl text-gray-600">Let AI craft a personalized travel experience just for you</p>
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Create Your Perfect Itinerary
+          </h1>
+          <p className="text-xl text-gray-600">
+            Let AI craft a personalized travel experience just for you
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">
@@ -135,8 +264,11 @@ export default function CreateItinerary() {
                 <MapPin className="h-5 w-5 text-cyan-600" />
                 Trip Details
               </CardTitle>
-              <CardDescription>Tell us about your dream destination and travel dates</CardDescription>
+              <CardDescription>
+                Tell us about your dream destination and travel dates
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-6">
               <div>
                 <Label htmlFor="destination">Destination</Label>
@@ -144,7 +276,12 @@ export default function CreateItinerary() {
                   id="destination"
                   placeholder="e.g., Paris, France or Tokyo, Japan"
                   value={formData.destination}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, destination: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      destination: e.target.value,
+                    }))
+                  }
                   required
                 />
               </div>
@@ -155,18 +292,34 @@ export default function CreateItinerary() {
                   <Input
                     id="startDate"
                     type="date"
+                    min={new Date().toLocaleDateString("en-CA")}
                     value={formData.startDate}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, startDate: e.target.value }))}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        startDate: e.target.value,
+                      }))
+                    }
                     required
                   />
                 </div>
+
                 <div>
                   <Label htmlFor="endDate">End Date</Label>
                   <Input
                     id="endDate"
                     type="date"
+                    min={
+                      formData.startDate ||
+                      new Date().toLocaleDateString("en-CA")
+                    }
                     value={formData.endDate}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, endDate: e.target.value }))}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        endDate: e.target.value,
+                      }))
+                    }
                     required
                   />
                 </div>
@@ -188,10 +341,13 @@ export default function CreateItinerary() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <DollarSign className="h-5 w-5 text-green-600" />
-                Budget & Group
+                Budget &amp; Group
               </CardTitle>
-              <CardDescription>Set your budget and group size for personalized recommendations</CardDescription>
+              <CardDescription>
+                Set your budget and group size for personalized recommendations
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -199,21 +355,35 @@ export default function CreateItinerary() {
                   <Input
                     id="budget"
                     type="number"
+                    min="1"
+                    step="0.01"
                     placeholder="e.g., 2000"
                     value={formData.budget}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, budget: e.target.value }))}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        budget: e.target.value,
+                      }))
+                    }
                     required
                   />
                 </div>
+
                 <div>
                   <Label htmlFor="groupSize">Group Size</Label>
                   <Select
                     value={formData.groupSize}
-                    onValueChange={(value) => setFormData((prev) => ({ ...prev, groupSize: value }))}
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        groupSize: value,
+                      }))
+                    }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="groupSize">
                       <SelectValue />
                     </SelectTrigger>
+
                     <SelectContent>
                       {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
                         <SelectItem key={num} value={num.toString()}>
@@ -243,72 +413,129 @@ export default function CreateItinerary() {
                 <Sparkles className="h-5 w-5 text-purple-600" />
                 Travel Preferences
               </CardTitle>
-              <CardDescription>Customize your experience based on your interests and style</CardDescription>
+              <CardDescription>
+                Customize your experience based on your interests and style
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-6">
               <div>
                 <Label>Travel Style</Label>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
                   {travelStyles.map((style) => (
-                    <div
+                    <button
                       key={style.value}
-                      className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                      type="button"
+                      aria-pressed={formData.travelStyle === style.value}
+                      className={`p-4 border rounded-lg text-left transition-all ${
                         formData.travelStyle === style.value
                           ? "border-cyan-500 bg-cyan-50"
                           : "border-gray-200 hover:border-gray-300"
                       }`}
-                      onClick={() => setFormData((prev) => ({ ...prev, travelStyle: style.value }))}
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          travelStyle: style.value,
+                        }))
+                      }
                     >
-                      <h4 className="font-medium text-gray-900">{style.label}</h4>
-                      <p className="text-sm text-gray-600 mt-1">{style.description}</p>
-                    </div>
+                      <h4 className="font-medium text-gray-900">
+                        {style.label}
+                      </h4>
+                      <p className="text-sm text-gray-600 mt-1">
+                        {style.description}
+                      </p>
+                    </button>
                   ))}
                 </div>
               </div>
 
               <div>
                 <Label>Favorite Activities</Label>
-                <p className="text-sm text-gray-600 mb-3">Select activities you enjoy (choose multiple)</p>
+                <p className="text-sm text-gray-600 mb-3">
+                  Select activities you enjoy (choose multiple)
+                </p>
+
                 <div className="flex flex-wrap gap-2">
-                  {popularActivities.map((activity) => (
-                    <Badge
-                      key={activity}
-                      variant={formData.activities.includes(activity) ? "default" : "outline"}
-                      className="cursor-pointer hover:bg-cyan-100"
-                      onClick={() => handleActivityToggle(activity)}
-                    >
-                      {activity}
-                    </Badge>
-                  ))}
+                  {popularActivities.map((activity) => {
+                    const selected = formData.activities.includes(activity)
+
+                    return (
+                      <Badge
+                        key={activity}
+                        variant={selected ? "default" : "outline"}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={selected}
+                        className="cursor-pointer hover:bg-cyan-100"
+                        onClick={() => handleActivityToggle(activity)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault()
+                            handleActivityToggle(activity)
+                          }
+                        }}
+                      >
+                        {activity}
+                      </Badge>
+                    )
+                  })}
                 </div>
               </div>
 
               <div>
-                <Label htmlFor="accommodation">Accommodation Preference</Label>
+                <Label htmlFor="accommodation">
+                  Accommodation Preference
+                </Label>
+
                 <Select
                   value={formData.accommodation}
-                  onValueChange={(value) => setFormData((prev) => ({ ...prev, accommodation: value }))}
+                  onValueChange={(value) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      accommodation: value,
+                    }))
+                  }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="accommodation">
                     <SelectValue placeholder="Select accommodation type" />
                   </SelectTrigger>
+
                   <SelectContent>
-                    <SelectItem value="budget">Budget (Hostels, Budget Hotels)</SelectItem>
-                    <SelectItem value="mid-range">Mid-range (3-star Hotels, B&Bs)</SelectItem>
-                    <SelectItem value="luxury">Luxury (4-5 star Hotels, Resorts)</SelectItem>
-                    <SelectItem value="unique">Unique (Boutique, Local Stays)</SelectItem>
-                    <SelectItem value="apartment">Apartments/Vacation Rentals</SelectItem>
+                    <SelectItem value="budget">
+                      Budget (Hostels, Budget Hotels)
+                    </SelectItem>
+                    <SelectItem value="mid-range">
+                      Mid-range (3-star Hotels, B&amp;Bs)
+                    </SelectItem>
+                    <SelectItem value="luxury">
+                      Luxury (4-5 star Hotels, Resorts)
+                    </SelectItem>
+                    <SelectItem value="unique">
+                      Unique (Boutique, Local Stays)
+                    </SelectItem>
+                    <SelectItem value="apartment">
+                      Apartments/Vacation Rentals
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div>
-                <Label htmlFor="specialRequirements">Special Requirements</Label>
+                <Label htmlFor="specialRequirements">
+                  Special Requirements
+                </Label>
                 <Textarea
                   id="specialRequirements"
                   placeholder="Any dietary restrictions, accessibility needs, or special interests..."
                   value={formData.specialRequirements}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, specialRequirements: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      specialRequirements: e.target.value,
+                    }))
+                  }
                   rows={3}
                 />
               </div>

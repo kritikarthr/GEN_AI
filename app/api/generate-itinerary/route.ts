@@ -1,51 +1,173 @@
+
 import { createGroq } from "@ai-sdk/groq"
 import { generateText } from "ai"
 import { createServerClient } from "@/lib/supabase/server"
 import { cookies } from "next/headers"
+
+export const runtime = "nodejs"
+
 const groq = createGroq({
   apiKey: process.env.GROQ_API_KEY,
 })
-export async function POST(request: Request) {
-  console.log("TYPE:", typeof process.env.GROQ_API_KEY)
-  console.log("VALUE:", process.env.GROQ_API_KEY)
-  console.log("TEST:", process.env.TEST_VARIABLE)
-  try {
-    const { destination, startDate, endDate, budget, groupSize, preferences } = await request.json()
 
-    // Get user from Supabase
+async function validateDestination(destination: string) {
+  const query = destination.trim()
+
+  if (!query || query.length < 2) {
+    return {
+      valid: false,
+      error: "Please enter a valid destination, such as Paris, Tokyo, or Bengaluru.",
+    }
+  }
+
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search")
+    url.searchParams.set("q", query)
+    url.searchParams.set("format", "jsonv2")
+    url.searchParams.set("limit", "1")
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        "User-Agent": "ItineraryAssist/1.0",
+      },
+      signal: AbortSignal.timeout(8000),
+      cache: "no-store",
+    })
+
+    if (!response.ok) {
+      return {
+        valid: false,
+        error:
+          "We couldn't verify your destination right now. Please try again shortly.",
+      }
+    }
+
+    const results = await response.json()
+
+    if (!Array.isArray(results) || results.length === 0) {
+      return {
+        valid: false,
+        error: `We couldn't find "${query}". Please check the spelling or enter a real city, region, or country.`,
+      }
+    }
+
+    return { valid: true, error: "" }
+  } catch (error) {
+    console.error("Destination validation failed:", error)
+
+    return {
+      valid: false,
+      error:
+        "We couldn't verify your destination right now. Please check your connection and try again.",
+    }
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const {
+      destination,
+      startDate,
+      endDate,
+      budget,
+      groupSize,
+      preferences,
+    } = await request.json()
+
+    // Validate destination input
+    if (typeof destination !== "string" || !destination.trim()) {
+      return Response.json(
+        { success: false, error: "Please enter a destination." },
+        { status: 400 }
+      )
+    }
+
+    // Authenticate user
     const cookieStore = cookies()
     const supabase = createServerClient(cookieStore)
+
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 })
+      return Response.json(
+        { success: false, error: "Unauthorized. Please sign in again." },
+        { status: 401 }
+      )
+    }
+
+    // Check whether the destination exists before calling Groq
+    const destinationCheck = await validateDestination(destination)
+
+    if (!destinationCheck.valid) {
+      return Response.json(
+        {
+          success: false,
+          error: destinationCheck.error,
+        },
+        { status: 400 }
+      )
     }
 
     // Get user preferences from database
-    const { data: userProfile } = await supabase.from("user_profiles").select("*").eq("id", user.id).single()
+    const { data: userProfile } = await supabase
+      .from("user_profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single()
 
     // Calculate trip duration
     const start = new Date(startDate)
     const end = new Date(endDate)
-    const duration = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+    const duration = Math.ceil(
+      (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+    )
 
-    const month = start.getMonth() + 1
+    if (
+      !Number.isFinite(start.getTime()) ||
+      !Number.isFinite(end.getTime()) ||
+      duration <= 0
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "Please select valid travel dates. The end date must be after the start date.",
+        },
+        { status: 400 }
+      )
+    }
+
+    if (
+      !Number.isFinite(Number(budget)) ||
+      Number(budget) <= 0 ||
+      !Number.isFinite(Number(groupSize)) ||
+      Number(groupSize) < 1
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "Please enter a valid budget and group size.",
+        },
+        { status: 400 }
+      )
+    }
+
     const seasonalContext = `
+IMPORTANT SEASONAL CONTEXT for ${destination} in ${start.toLocaleDateString(
+      "en-US",
+      { month: "long" }
+    )}:
+- Analyze the specific weather patterns, temperature ranges, and precipitation for this destination and time of year.
+- Consider local seasonal events, festivals, and cultural celebrations.
+- Account for tourist seasons and how they affect pricing and crowds.
+- Identify seasonal activities that are particularly good or should be avoided.
+- Consider daylight hours and how they affect daily scheduling.
+- Factor in seasonal closures and changes in operating hours.
+- Consider region-specific conditions such as monsoons, hurricanes, or winter weather.
+`
 
-IMPORTANT SEASONAL CONTEXT for ${destination} in ${start.toLocaleDateString("en-US", { month: "long" })}:
-- Analyze the specific weather patterns, temperature ranges, and precipitation for this destination and time of year
-- Consider local seasonal events, festivals, and cultural celebrations happening during this period
-- Account for tourist season patterns (peak/off-peak) and how they affect pricing and crowds
-- Identify seasonal activities that are particularly good or should be avoided during this time
-- Consider daylight hours and how they affect daily scheduling
-- Factor in any seasonal closures of attractions or changes in operating hours
-- Include region-specific seasonal considerations (monsoons, hurricane seasons, winter conditions, etc.)
-    `
-
-    // Create comprehensive prompt for AI
     const prompt = `Create a detailed ${duration}-day travel itinerary for ${destination}.
 
 Trip Details:
@@ -53,68 +175,36 @@ Trip Details:
 - Dates: ${startDate} to ${endDate} (${duration} days)
 - Budget: $${budget} USD total
 - Group Size: ${groupSize} people
-- Budget per person per day: $${Math.round(budget / groupSize / duration)}
+- Budget per person per day: $${Math.round(
+      Number(budget) / Number(groupSize) / duration
+    )}
 
 User Preferences:
-- Favorite Activities: ${preferences.activities?.join(", ") || userProfile?.favorite_activities?.join(", ") || "General sightseeing"}
-- Travel Style: ${preferences.travelStyle || userProfile?.travel_style || "Balanced"}
-- Accommodation Type: ${preferences.accommodation || userProfile?.accommodation_preference || "Mid-range hotels"}
+- Favorite Activities: ${preferences?.activities?.join(", ") || userProfile?.favorite_activities?.join(", ") || "General sightseeing"}
+- Travel Style: ${preferences?.travelStyle || userProfile?.travel_style || "Balanced"}
+- Accommodation Type: ${preferences?.accommodation || userProfile?.accommodation_preference || "Mid-range hotels"}
 - Languages: ${userProfile?.languages?.join(", ") || "English"}
-- Special Requirements: ${preferences.specialRequirements || userProfile?.special_requirements || "None"}
+- Special Requirements: ${preferences?.specialRequirements || userProfile?.special_requirements || "None"}
 
 ${seasonalContext}
 
 Please create a comprehensive itinerary that includes:
 
-1. **Daily Schedule** (Day 1, Day 2, etc.):
-   - Morning activities with specific times
-   - Afternoon activities with specific times  
-   - Evening activities with specific times
-   - Estimated costs for each activity
+1. Daily Schedule with morning, afternoon, and evening activities, specific times, and estimated costs.
+2. Accommodation Recommendations with suggested lodging and estimated rates.
+3. Transportation options and estimated costs.
+4. Food and Dining recommendations, local specialties, and estimated food costs.
+5. Budget Breakdown for accommodation, activities, food, transportation, and miscellaneous expenses. Keep estimates consistent with the total budget.
+6. Seasonal Considerations, expected weather, packing advice, seasonal activities, and possible closures.
+7. Safety and Practical Tips, including local customs, safety considerations, emergency contacts, currency, payment methods, and seasonal health considerations.
 
-2. **Accommodation Recommendations**:
-   - Specific hotel/lodging suggestions within budget
-   - Nightly rates and total accommodation cost
+Format the response as a well-structured itinerary. Include specific venue names, addresses when possible, and realistic time estimates. Do not claim that weather, opening hours, prices, or events have been verified in real time unless they actually have been.`
 
-3. **Transportation**:
-   - How to get around the city/region
-   - Estimated transportation costs
-
-4. **Food & Dining**:
-   - Restaurant recommendations for each meal
-   - Local specialties to try
-   - Estimated food costs per day
-
-5. **Budget Breakdown**:
-   - Accommodation: $X
-   - Activities: $X
-   - Food: $X
-   - Transportation: $X
-   - Miscellaneous: $X
-   - Total: $${budget}
-
-6. **Detailed Seasonal Considerations**:
-   - Specific weather expectations for ${startDate} to ${endDate}
-   - Detailed packing recommendations based on local climate
-   - Seasonal activities and events happening during your visit
-   - Best times of day for outdoor activities considering weather
-   - Any seasonal closures or limited hours for attractions
-   - Local seasonal specialties (food, festivals, natural phenomena)
-
-7. **Safety & Practical Tips**:
-   - Important local customs
-   - Safety considerations
-   - Emergency contacts
-   - Currency and payment methods
-   - Seasonal health considerations (sun protection, hydration, etc.)
-
-Format the response as a well-structured itinerary that's easy to read and follow. Include specific venue names, addresses when possible, and realistic time estimates. Pay special attention to seasonal factors that could significantly impact the travel experience.`
-
-    // Generate itinerary using updated Groq model
+    // Generate itinerary using Groq
     const { text } = await generateText({
-      model: groq("llama-3.3-70b-versatile"), // ← updated model
+      model: groq("openai/gpt-oss-120b"),
       prompt,
-      maxTokens: 4000,
+      maxOutputTokens: 4000,
     })
 
     // Save itinerary to database
@@ -122,12 +212,12 @@ Format the response as a well-structured itinerary that's easy to read and follo
       .from("itineraries")
       .insert({
         user_id: user.id,
-        destination,
+        destination: destination.trim(),
         start_date: startDate,
         end_date: endDate,
         budget,
         group_size: groupSize,
-        preferences: preferences,
+        preferences,
         content: text,
         created_at: new Date().toISOString(),
       })
@@ -136,7 +226,11 @@ Format the response as a well-structured itinerary that's easy to read and follo
 
     if (saveError) {
       console.error("Error saving itinerary:", saveError)
-      return Response.json({ error: "Failed to save itinerary" }, { status: 500 })
+
+      return Response.json(
+        { success: false, error: "Failed to save itinerary. Please try again." },
+        { status: 500 }
+      )
     }
 
     return Response.json({
@@ -146,6 +240,13 @@ Format the response as a well-structured itinerary that's easy to read and follo
     })
   } catch (error) {
     console.error("Error generating itinerary:", error)
-    return Response.json({ error: "Failed to generate itinerary" }, { status: 500 })
+
+    return Response.json(
+      {
+        success: false,
+        error: "Something went wrong while generating your itinerary. Please try again.",
+      },
+      { status: 500 }
+    )
   }
 }
