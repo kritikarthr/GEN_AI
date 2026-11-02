@@ -27,6 +27,9 @@ import { useRouter } from "next/navigation"
 
 interface AddExpenseFormProps {
   itineraryId: string
+  currencyCode?: string
+  currencySymbol?: string
+  exchangeRateInr?: number
 }
 
 const categories = [
@@ -47,7 +50,12 @@ function getLocalDate() {
   return `${year}-${month}-${day}`
 }
 
-export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
+export function AddExpenseForm({
+  itineraryId,
+  currencyCode = "INR",
+  currencySymbol = "₹",
+  exchangeRateInr = 1,
+}: AddExpenseFormProps) {
   const router = useRouter()
 
   const [open, setOpen] = useState(false)
@@ -61,6 +69,21 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
     expenseDate: getLocalDate(),
   })
 
+  const amount = Number(formData.amount)
+
+  // exchangeRateInr = local currency received for ₹1
+  const inrEquivalent =
+    Number.isFinite(amount) && amount > 0 && exchangeRateInr > 0
+      ? amount / exchangeRateInr
+      : 0
+
+  const formatINR = (value: number) =>
+    new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 2,
+    }).format(value)
+
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
 
@@ -73,14 +96,14 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
     e.preventDefault()
     setErrorMessage("")
 
-    const amount = Number(formData.amount)
+    const expenseAmount = Number(formData.amount)
 
     if (!formData.category) {
       setErrorMessage("Please select an expense category.")
       return
     }
 
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!Number.isFinite(expenseAmount) || expenseAmount <= 0) {
       setErrorMessage("Please enter an amount greater than zero.")
       return
     }
@@ -106,9 +129,10 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
         body: JSON.stringify({
           itineraryId,
           category: formData.category,
-          amount,
+          amount: expenseAmount,
           description: formData.description.trim(),
           expenseDate: formData.expenseDate,
+          currencyCode,
         }),
       })
 
@@ -141,7 +165,7 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "An unexpected error occurred. Please try again."
+          : "An unexpected error occurred. Please try again.",
       )
     } finally {
       setIsSubmitting(false)
@@ -161,7 +185,7 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
         <DialogHeader>
           <DialogTitle>Add New Expense</DialogTitle>
           <DialogDescription>
-            Record a new expense for your trip.
+            Record a new expense in your destination's local currency.
           </DialogDescription>
         </DialogHeader>
 
@@ -192,7 +216,9 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="expense-amount">Amount ($)</Label>
+            <Label htmlFor="expense-amount">
+              Amount ({currencyCode})
+            </Label>
 
             <Input
               id="expense-amount"
@@ -202,12 +228,30 @@ export function AddExpenseForm({ itineraryId }: AddExpenseFormProps) {
               placeholder="0.00"
               value={formData.amount}
               onChange={(e) => {
-                setFormData((prev) => ({ ...prev, amount: e.target.value }))
+                setFormData((prev) => ({
+                  ...prev,
+                  amount: e.target.value,
+                }))
                 setErrorMessage("")
               }}
               required
               disabled={isSubmitting}
             />
+
+            <p className="text-sm text-gray-500">
+              Enter amount in {currencySymbol} ({currencyCode}).
+            </p>
+
+            {amount > 0 && Number.isFinite(amount) && (
+              <div className="rounded-md bg-blue-50 border border-blue-100 p-3">
+                <p className="text-sm text-gray-600">
+                  Approximate Indian Rupee equivalent
+                </p>
+                <p className="text-lg font-semibold text-blue-700">
+                  {formatINR(inrEquivalent)}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

@@ -1,4 +1,3 @@
-
 import { createServerClient } from "@/lib/supabase/server"
 import { cookies } from "next/headers"
 import { notFound, redirect } from "next/navigation"
@@ -61,6 +60,17 @@ export default async function ItineraryPage({
   const start = new Date(itinerary.start_date)
   const end = new Date(itinerary.end_date)
 
+  const currencySymbol = itinerary.currency_symbol || "₹"
+  const currencyCode = itinerary.currency_code || "INR"
+
+  const localBudget = Number(
+    itinerary.local_budget ?? itinerary.budget ?? 0
+  )
+
+  const budgetInr = Number(
+    itinerary.budget_inr ?? itinerary.budget ?? 0
+  )
+
   const duration = Math.max(
     1,
     Math.ceil(
@@ -112,23 +122,33 @@ export default async function ItineraryPage({
                 <div className="flex items-center gap-2">
                   <MapPin className="h-5 w-5 text-cyan-600" />
                   <div>
-                    <p className="text-sm text-gray-600">Destination</p>
-                    <p className="font-medium">{itinerary.destination}</p>
+                    <p className="text-sm text-gray-600">
+                      Destination
+                    </p>
+                    <p className="font-medium">
+                      {itinerary.destination}
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Calendar className="h-5 w-5 text-blue-600" />
                   <div>
-                    <p className="text-sm text-gray-600">Duration</p>
-                    <p className="font-medium">{duration} days</p>
+                    <p className="text-sm text-gray-600">
+                      Duration
+                    </p>
+                    <p className="font-medium">
+                      {duration} days
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Users className="h-5 w-5 text-purple-600" />
                   <div>
-                    <p className="text-sm text-gray-600">Group Size</p>
+                    <p className="text-sm text-gray-600">
+                      Group Size
+                    </p>
                     <p className="font-medium">
                       {itinerary.group_size} people
                     </p>
@@ -138,16 +158,32 @@ export default async function ItineraryPage({
                 <div className="flex items-center gap-2">
                   <DollarSign className="h-5 w-5 text-green-600" />
                   <div>
-                    <p className="text-sm text-gray-600">Total Budget</p>
+                    <p className="text-sm text-gray-600">
+                      Total Budget ({currencyCode})
+                    </p>
+
                     <p className="font-medium">
-                      ${Number(itinerary.budget).toLocaleString()}
+                      {currencySymbol}
+                      {localBudget.toLocaleString("en-IN", {
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+
+                    <p className="text-xs text-gray-500">
+                      INR equivalent: ₹
+                      {budgetInr.toLocaleString("en-IN", {
+                        maximumFractionDigits: 2,
+                      })}
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="mt-4 border-t pt-4">
-                <p className="mb-2 text-sm text-gray-600">Travel Dates</p>
+                <p className="mb-2 text-sm text-gray-600">
+                  Travel Dates
+                </p>
+
                 <p className="font-medium">
                   {formatDate(itinerary.start_date)} –{" "}
                   {formatDate(itinerary.end_date)}
@@ -159,6 +195,7 @@ export default async function ItineraryPage({
                   <p className="mb-2 text-sm text-gray-600">
                     Selected Activities
                   </p>
+
                   <div className="flex flex-wrap gap-2">
                     {itinerary.preferences.activities.map(
                       (activity: string) => (
@@ -179,7 +216,10 @@ export default async function ItineraryPage({
           destination={itinerary.destination}
           startDate={itinerary.start_date}
           endDate={itinerary.end_date}
-          budget={itinerary.budget}
+          budget={localBudget}
+          budgetInr={budgetInr}
+          currencySymbol={currencySymbol}
+          currencyCode={currencyCode}
           groupSize={itinerary.group_size}
         />
 

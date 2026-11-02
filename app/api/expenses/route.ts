@@ -15,9 +15,15 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
 
-    const { itineraryId, category, amount, description, expenseDate } = body
+    const {
+      itineraryId,
+      category,
+      amount,
+      description,
+      expenseDate,
+    } = body
 
-    // Validate the submitted data
+    // Validate submitted data
     if (
       typeof itineraryId !== "string" ||
       !itineraryId.trim() ||
@@ -35,15 +41,18 @@ export async function POST(request: Request) {
       Number.isNaN(Date.parse(`${expenseDate}T00:00:00Z`))
     ) {
       return Response.json(
-        { error: "Please provide a valid category, positive amount, description, and date." },
-        { status: 400 }
+        {
+          error:
+            "Please provide a valid category, positive amount, description, and date.",
+        },
+        { status: 400 },
       )
     }
 
     const cookieStore = cookies()
     const supabase = createServerClient(cookieStore)
 
-    // Verify the logged-in user
+    // Verify logged-in user
     const {
       data: { user },
       error: authError,
@@ -52,14 +61,14 @@ export async function POST(request: Request) {
     if (authError || !user) {
       return Response.json(
         { error: "Your session has expired. Please log in again." },
-        { status: 401 }
+        { status: 401 },
       )
     }
 
-    // Verify itinerary ownership
+    // Verify itinerary ownership and retrieve its currency
     const { data: itinerary, error: itineraryError } = await supabase
       .from("itineraries")
-      .select("id")
+      .select("id, currency_code, currency_symbol, exchange_rate_inr")
       .eq("id", itineraryId)
       .eq("user_id", user.id)
       .maybeSingle()
@@ -69,18 +78,33 @@ export async function POST(request: Request) {
 
       return Response.json(
         { error: "Could not verify the itinerary. Check the server logs." },
-        { status: 500 }
+        { status: 500 },
       )
     }
 
     if (!itinerary) {
       return Response.json(
-        { error: "Itinerary not found or you do not have access to it." },
-        { status: 404 }
+        {
+          error:
+            "Itinerary not found or you do not have access to it.",
+        },
+        { status: 404 },
       )
     }
 
-    // Save the expense
+    // Ensure the itinerary has valid currency information
+    const currencyCode = itinerary.currency_code || "INR"
+    const exchangeRate = Number(itinerary.exchange_rate_inr) || 1
+
+    if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+      return Response.json(
+        { error: "The itinerary has an invalid currency exchange rate." },
+        { status: 400 },
+      )
+    }
+
+    // Store the expense amount in the itinerary's local currency.
+    // INR conversion is calculated for display using the saved exchange rate.
     const { data: expense, error: expenseError } = await supabase
       .from("expenses")
       .insert({
@@ -102,24 +126,36 @@ export async function POST(request: Request) {
         hint: expenseError.hint,
       })
 
-      // Return the actual database error so we can diagnose it.
       return Response.json(
         {
           error: "Could not save expense.",
           details: expenseError.message,
           code: expenseError.code,
         },
-        { status: 500 }
+        { status: 500 },
       )
     }
 
-    return Response.json({ success: true, expense }, { status: 201 })
+    return Response.json(
+      {
+        success: true,
+        expense,
+        currency: {
+          code: currencyCode,
+          symbol: itinerary.currency_symbol || "₹",
+          exchangeRateInr: exchangeRate,
+        },
+      },
+      { status: 201 },
+    )
   } catch (error) {
     console.error("Expenses API error:", error)
 
     return Response.json(
-      { error: "Unexpected server error while adding the expense." },
-      { status: 500 }
+      {
+        error: "Unexpected server error while adding the expense.",
+      },
+      { status: 500 },
     )
   }
 }

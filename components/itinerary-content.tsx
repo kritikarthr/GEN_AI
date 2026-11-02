@@ -1,4 +1,3 @@
-
 "use client"
 
 import { useMemo, useState } from "react"
@@ -13,7 +12,6 @@ import {
   Camera,
   CheckCircle2,
   Circle,
-  Star,
   Sparkles,
   Sun,
   Moon,
@@ -22,9 +20,7 @@ import {
   ArrowUpRight,
   Compass,
   Plane,
-  Check,
   Lightbulb,
-  Coffee,
 } from "lucide-react"
 
 import {
@@ -34,6 +30,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+
 import { Badge } from "@/components/ui/badge"
 import {
   Tabs,
@@ -49,6 +46,9 @@ interface ItineraryContentProps {
   startDate: string
   endDate: string
   budget: number
+  budgetInr?: number
+  currencySymbol?: string
+  currencyCode?: string
   groupSize: number
 }
 
@@ -56,7 +56,7 @@ interface DayActivity {
   time: string
   activity: string
   location?: string
-  cost?: string
+  cost?: number
   type: "morning" | "afternoon" | "evening"
 }
 
@@ -67,13 +67,59 @@ interface DayPlan {
   notes: string[]
 }
 
+interface BudgetItem {
+  name: string
+  amount: number
+  icon: typeof Bed
+}
+
 const categoryPatterns = [
-  { name: "Accommodation", icon: Bed, pattern: /accommodation|hotel|stay/i },
-  { name: "Food & Dining", icon: Utensils, pattern: /food|dining|restaurant|meal/i },
-  { name: "Transportation", icon: Car, pattern: /transport|travel|taxi|transfer/i },
-  { name: "Activities", icon: Camera, pattern: /activit|attraction|sightseeing|experience/i },
-  { name: "Other", icon: Wallet, pattern: /miscellaneous|other|shopping/i },
+  {
+    name: "Accommodation",
+    icon: Bed,
+    pattern: /accommodation|hotel|stay|lodging/i,
+  },
+  {
+    name: "Food & Dining",
+    icon: Utensils,
+    pattern: /food|dining|restaurant|meal/i,
+  },
+  {
+    name: "Transportation",
+    icon: Car,
+    pattern: /transport|travel|taxi|transfer/i,
+  },
+  {
+    name: "Activities",
+    icon: Camera,
+    pattern: /activit|attraction|sightseeing|experience/i,
+  },
+  {
+    name: "Other",
+    icon: Wallet,
+    pattern: /miscellaneous|other|shopping/i,
+  },
 ]
+
+function formatMoney(amount: number, symbol: string) {
+  return `${symbol}${Number(amount || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function extractAmount(value: string): number | undefined {
+  if (!value) return undefined
+
+  // Supports values such as €25, € 25, EUR 25, 25 EUR, ₹1,500 and $20.
+  const match = value.match(
+    /(?:[$€£¥₹₩฿₺₱₫]|[A-Z]{3}\s*)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(?:[A-Z]{3})/i
+  )
+
+  if (!match) return undefined
+
+  const amount = Number((match[1] || match[2]).replace(/,/g, ""))
+  return Number.isFinite(amount) ? amount : undefined
+}
 
 function cleanLine(line: string) {
   return line
@@ -89,7 +135,9 @@ function cleanLine(line: string) {
 
 function formatDate(dateString: string) {
   if (!dateString) return "Date not set"
+
   const date = new Date(`${dateString.slice(0, 10)}T12:00:00`)
+
   if (Number.isNaN(date.getTime())) return dateString
 
   return date.toLocaleDateString("en-US", {
@@ -108,6 +156,7 @@ function getActivityType(time: string): DayActivity["type"] {
 
   if (/evening/i.test(time) || hour >= 18) return "evening"
   if (/afternoon/i.test(time) || hour >= 12) return "afternoon"
+
   return "morning"
 }
 
@@ -146,7 +195,9 @@ function parseItinerary(
     const line = rawLine.trim()
     if (!line) continue
 
-    const dayMatch = line.match(/^#{0,6}\s*\*{0,2}\s*Day\s+(\d+)/i)
+    const dayMatch = line.match(
+      /^#{0,6}\s*(?:\*\*)?\s*Day\s+(\d+)/i
+    )
 
     if (dayMatch) {
       saveDay()
@@ -156,6 +207,7 @@ function parseItinerary(
 
     if (!currentDay) continue
 
+    // Handle table-formatted activities.
     if (line.includes("|")) {
       const columns = line
         .split("|")
@@ -165,22 +217,22 @@ function parseItinerary(
       if (columns.length < 2) continue
       if (/^time$/i.test(columns[0])) continue
       if (columns.every((column) => /^[-:\s]+$/.test(column))) continue
-      if (/^day-total/i.test(columns[0])) continue
+      if (/^day[-\s]*total/i.test(columns[0])) continue
 
       const time = columns[0]
       if (!/\d{1,2}:\d{2}/.test(time)) continue
 
-      const activity = columns[1] || ""
-      const location = columns[2] || ""
-      const costText = columns[3] || ""
+      const activity = cleanLine(columns[1] || "")
+      const location = cleanLine(columns[2] || "")
+      const cost = extractAmount(columns.slice(3).join(" "))
 
       if (!activity) continue
 
       currentDay.activities.push({
         time,
-        activity: activity.replace(/\*\*/g, "").trim(),
-        location: location.replace(/\*\*/g, "").trim(),
-        cost: costText.match(/\$[\d,]+(?:\.\d{1,2})?/)?.[0],
+        activity,
+        location,
+        cost,
         type: getActivityType(time),
       })
 
@@ -189,18 +241,27 @@ function parseItinerary(
 
     const cleaned = cleanLine(line)
 
+    // Handle lines such as "9:00 AM - Visit the museum (€20)".
     const activityMatch = cleaned.match(
       /^(?:(\d{1,2}:\d{2}\s*(?:AM|PM)?)|(morning|afternoon|evening))\s*[-–—:]\s*(.+)$/i
     )
 
     if (activityMatch) {
       const time = activityMatch[1] || activityMatch[2]
-      const activity = activityMatch[3]
-      const cost = activity.match(/\$[\d,]+(?:\.\d{1,2})?/)?.[0]
+      const activityText = activityMatch[3]
+      const cost = extractAmount(activityText)
+
+      const activity = activityText
+        .replace(
+          /(?:[$€£¥₹₩฿₺₱₫]|[A-Z]{3})\s*[\d,]+(?:\.\d{1,2})?/gi,
+          ""
+        )
+        .replace(/\([\s]*\)/g, "")
+        .trim()
 
       currentDay.activities.push({
         time,
-        activity: activity.replace(/\$[\d,]+(?:\.\d{1,2})?/g, "").trim(),
+        activity,
         cost,
         type: getActivityType(time),
       })
@@ -225,31 +286,38 @@ function parseItinerary(
       1,
       Math.ceil((end.getTime() - start.getTime()) / 86400000) + 1
     )
-    return days.filter((day) => day.day >= 1 && day.day <= tripDays)
+
+    return days.filter(
+      (day) => day.day >= 1 && day.day <= tripDays
+    )
   }
 
   return days
 }
 
-function getBudgetBreakdown(content: string) {
-  const items: { name: string; amount: number; icon: typeof Bed }[] = []
+function getBudgetBreakdown(content: string): BudgetItem[] {
+  const items: BudgetItem[] = []
 
   for (const line of content.split(/\r?\n/)) {
-    const match = cleanLine(line).match(
-      /^([^:]+):\s*(?:USD\s*)?\$?\s*([\d,]+(?:\.\d{1,2})?)\s*$/
-    )
+    const cleaned = cleanLine(line)
+    const match = cleaned.match(/^([^:]+):\s*(.+)$/)
 
     if (!match) continue
 
     const category = categoryPatterns.find((item) =>
       item.pattern.test(match[1])
     )
+
     if (!category) continue
 
-    const amount = Number(match[2].replace(/,/g, ""))
+    const amount = extractAmount(match[2])
 
-    if (Number.isFinite(amount) && amount > 0) {
-      items.push({ name: category.name, amount, icon: category.icon })
+    if (amount && amount > 0) {
+      items.push({
+        name: category.name,
+        amount,
+        icon: category.icon,
+      })
     }
   }
 
@@ -263,7 +331,11 @@ function formatContent(content: string) {
   return content.split(/\r?\n/).map((line, index) => {
     const trimmed = line.trim()
 
-    if (!trimmed || /^\|/.test(trimmed) || /^---+$/.test(trimmed)) {
+    if (
+      !trimmed ||
+      /^\|/.test(trimmed) ||
+      /^---+$/.test(trimmed)
+    ) {
       return null
     }
 
@@ -274,7 +346,10 @@ function formatContent(content: string) {
 
     if (isHeading) {
       return (
-        <h3 key={index} className="mt-5 mb-2 text-base font-bold text-slate-900">
+        <h3
+          key={index}
+          className="mt-5 mb-2 text-base font-bold text-slate-900"
+        >
           {text}
         </h3>
       )
@@ -282,7 +357,10 @@ function formatContent(content: string) {
 
     if (isBullet || isNumbered) {
       return (
-        <div key={index} className="flex gap-2 py-1.5 text-sm leading-6 text-slate-600">
+        <div
+          key={index}
+          className="flex gap-2 py-1.5 text-sm leading-6 text-slate-600"
+        >
           <span className="text-emerald-500">✦</span>
           <span>{text}</span>
         </div>
@@ -290,7 +368,10 @@ function formatContent(content: string) {
     }
 
     return (
-      <p key={index} className="py-1 text-sm leading-6 text-slate-600">
+      <p
+        key={index}
+        className="py-1 text-sm leading-6 text-slate-600"
+      >
         {text}
       </p>
     )
@@ -322,9 +403,15 @@ export function ItineraryContent({
   startDate,
   endDate,
   budget,
+  budgetInr,
+  currencySymbol = "₹",
+  currencyCode = "INR",
   groupSize,
 }: ItineraryContentProps) {
-  const [checkedActivities, setCheckedActivities] = useState<Set<string>>(new Set())
+  const [checkedActivities, setCheckedActivities] = useState<Set<string>>(
+    new Set()
+  )
+
   const [activeView, setActiveView] = useState("timeline")
 
   const dayPlans = useMemo(
@@ -352,16 +439,24 @@ export function ItineraryContent({
 
   const tripDuration =
     !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())
-      ? Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000) + 1)
+      ? Math.max(
+          1,
+          Math.ceil((end.getTime() - start.getTime()) / 86400000) + 1
+        )
       : dayPlans.length
 
-  const perPersonBudget = Number(budget) / Math.max(1, Number(groupSize))
+  const totalBudget = Number(budget) || 0
+  const originalInrBudget = Number(budgetInr ?? budget) || 0
+  const people = Math.max(1, Number(groupSize) || 1)
+  const perPersonBudget = totalBudget / people
 
   const toggleActivity = (id: string) => {
     setCheckedActivities((previous) => {
       const next = new Set(previous)
+
       if (next.has(id)) next.delete(id)
       else next.add(id)
+
       return next
     })
   }
@@ -373,14 +468,20 @@ export function ItineraryContent({
   }
 
   const periodStyle = (type: DayActivity["type"]) => {
-    if (type === "morning") return "bg-amber-50 text-amber-700 border-amber-100"
-    if (type === "afternoon") return "bg-sky-50 text-sky-700 border-sky-100"
+    if (type === "morning") {
+      return "bg-amber-50 text-amber-700 border-amber-100"
+    }
+
+    if (type === "afternoon") {
+      return "bg-sky-50 text-sky-700 border-sky-100"
+    }
+
     return "bg-violet-50 text-violet-700 border-violet-100"
   }
 
   return (
     <div className="space-y-5">
-      {/* Compact trip header */}
+      {/* Trip header */}
       <section className="relative overflow-hidden rounded-2xl bg-[#102c27] px-5 py-6 text-white shadow-md sm:px-7">
         <div className="absolute -right-10 -top-16 h-48 w-48 rounded-full border border-white/10" />
         <div className="absolute -right-2 -top-8 h-32 w-32 rounded-full border border-white/10" />
@@ -398,13 +499,19 @@ export function ItineraryContent({
 
           <div className="mt-4 flex flex-wrap gap-2">
             {[
-              { icon: CalendarDays, label: `${formatDate(startDate)} – ${formatDate(endDate)}` },
+              {
+                icon: CalendarDays,
+                label: `${formatDate(startDate)} – ${formatDate(endDate)}`,
+              },
               { icon: Clock, label: `${tripDuration} days` },
               { icon: UsersIcon, label: `${groupSize} travellers` },
-              { icon: Wallet, label: `$${Number(budget).toLocaleString()}` },
-            ].map((item) => (
+              {
+                icon: Wallet,
+                label: formatMoney(totalBudget, currencySymbol),
+              },
+            ].map((item, index) => (
               <span
-                key={item.label}
+                key={index}
                 className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs text-emerald-50"
               >
                 <item.icon className="h-3.5 w-3.5 text-emerald-300" />
@@ -415,13 +522,25 @@ export function ItineraryContent({
         </div>
       </section>
 
-      {/* Compact stats */}
+      {/* Trip statistics */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           { label: "Destination", value: destination, icon: MapPin },
-          { label: "Duration", value: `${tripDuration} days`, icon: CalendarDays },
-          { label: "Travellers", value: `${groupSize}`, icon: Plane },
-          { label: "Per person", value: `$${perPersonBudget.toLocaleString()}`, icon: Wallet },
+          {
+            label: "Duration",
+            value: `${tripDuration} days`,
+            icon: CalendarDays,
+          },
+          {
+            label: "Travellers",
+            value: `${groupSize}`,
+            icon: Plane,
+          },
+          {
+            label: `Per person (${currencyCode})`,
+            value: formatMoney(perPersonBudget, currencySymbol),
+            icon: Wallet,
+          },
         ].map((stat) => (
           <div
             key={stat.label}
@@ -430,26 +549,44 @@ export function ItineraryContent({
             <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
               <stat.icon className="h-4 w-4" />
             </div>
+
             <div className="min-w-0">
               <p className="text-[11px] text-slate-500">{stat.label}</p>
-              <p className="truncate text-sm font-semibold text-slate-900">{stat.value}</p>
+              <p className="truncate text-sm font-semibold text-slate-900">
+                {stat.value}
+              </p>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Navigation */}
-      <Tabs value={activeView} onValueChange={setActiveView} className="w-full">
+      {/* Navigation tabs */}
+      <Tabs
+        value={activeView}
+        onValueChange={setActiveView}
+        className="w-full"
+      >
         <TabsList className="grid h-auto w-full grid-cols-3 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-          <TabsTrigger value="timeline" className="gap-1.5 rounded-lg py-2.5 text-xs sm:text-sm">
+          <TabsTrigger
+            value="timeline"
+            className="gap-1.5 rounded-lg py-2.5 text-xs sm:text-sm"
+          >
             <CalendarDays className="h-3.5 w-3.5" />
             Daily plan
           </TabsTrigger>
-          <TabsTrigger value="overview" className="gap-1.5 rounded-lg py-2.5 text-xs sm:text-sm">
+
+          <TabsTrigger
+            value="overview"
+            className="gap-1.5 rounded-lg py-2.5 text-xs sm:text-sm"
+          >
             <ListChecks className="h-3.5 w-3.5" />
             Overview
           </TabsTrigger>
-          <TabsTrigger value="budget" className="gap-1.5 rounded-lg py-2.5 text-xs sm:text-sm">
+
+          <TabsTrigger
+            value="budget"
+            className="gap-1.5 rounded-lg py-2.5 text-xs sm:text-sm"
+          >
             <Wallet className="h-3.5 w-3.5" />
             Budget
           </TabsTrigger>
@@ -459,16 +596,21 @@ export function ItineraryContent({
         <TabsContent value="timeline" className="mt-4 space-y-4">
           {dayPlans.length > 0 ? (
             dayPlans.map((day) => {
-              const dayCost = day.activities.reduce((total, activity) => {
-                return total + (Number(activity.cost?.replace(/[$,]/g, "")) || 0)
-              }, 0)
+              const dayCost = day.activities.reduce(
+                (total, activity) => total + (activity.cost || 0),
+                0
+              )
 
-              const completed = day.activities.filter((_, index) =>
-                checkedActivities.has(`${day.day}-${index}`)
+              const completed = day.activities.filter(
+                (_, index) =>
+                  checkedActivities.has(`${day.day}-${index}`)
               ).length
 
               return (
-                <Card key={day.day} className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
+                <Card
+                  key={day.day}
+                  className="overflow-hidden rounded-2xl border-slate-200 shadow-sm"
+                >
                   <CardHeader className="border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-4 py-3.5 sm:px-5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -476,10 +618,12 @@ export function ItineraryContent({
                           <Badge className="border-0 bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100">
                             DAY {day.day}
                           </Badge>
+
                           <span className="text-[11px] text-slate-500">
                             {day.activities.length} activities
                           </span>
                         </div>
+
                         <CardTitle className="text-lg font-bold text-slate-900">
                           {day.date}
                         </CardTitle>
@@ -489,9 +633,10 @@ export function ItineraryContent({
                         {dayCost > 0 && (
                           <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
                             <Wallet className="mr-1 inline h-3 w-3" />
-                            ${dayCost.toLocaleString()}
+                            {formatMoney(dayCost, currencySymbol)}
                           </span>
                         )}
+
                         <span className="text-[11px] text-slate-500">
                           {completed}/{day.activities.length} done
                         </span>
@@ -504,13 +649,16 @@ export function ItineraryContent({
                       <div className="divide-y divide-slate-100">
                         {day.activities.map((activity, index) => {
                           const activityId = `${day.day}-${index}`
-                          const checked = checkedActivities.has(activityId)
+                          const checked =
+                            checkedActivities.has(activityId)
 
                           return (
                             <div
                               key={activityId}
                               className={`group flex gap-3 px-4 py-3.5 transition-colors sm:px-5 ${
-                                checked ? "bg-emerald-50/50" : "hover:bg-slate-50"
+                                checked
+                                  ? "bg-emerald-50/50"
+                                  : "hover:bg-slate-50"
                               }`}
                             >
                               <div className="flex shrink-0 flex-col items-center">
@@ -525,6 +673,7 @@ export function ItineraryContent({
                                 >
                                   {periodIcon(activity.type)}
                                 </div>
+
                                 {index !== day.activities.length - 1 && (
                                   <div className="mt-1.5 min-h-4 w-px flex-1 bg-slate-200" />
                                 )}
@@ -532,25 +681,37 @@ export function ItineraryContent({
 
                               <div className="min-w-0 flex-1">
                                 <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-                                  <span className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${periodStyle(activity.type)}`}>
+                                  <span
+                                    className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${periodStyle(
+                                      activity.type
+                                    )}`}
+                                  >
                                     {activity.time}
                                   </span>
-                                  {activity.cost && (
+
+                                  {activity.cost !== undefined && (
                                     <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                                      {activity.cost}
+                                      {formatMoney(
+                                        activity.cost,
+                                        currencySymbol
+                                      )}
                                     </span>
                                   )}
                                 </div>
 
-                                <h3 className={`text-sm font-semibold leading-5 ${
-                                  checked ? "text-slate-400 line-through" : "text-slate-800"
-                                }`}>
+                                <h3
+                                  className={`text-sm font-semibold leading-5 ${
+                                    checked
+                                      ? "text-slate-400 line-through"
+                                      : "text-slate-900"
+                                  }`}
+                                >
                                   {activity.activity}
                                 </h3>
 
                                 {activity.location && (
-                                  <p className="mt-1 flex items-start gap-1.5 text-xs leading-5 text-slate-500">
-                                    <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" />
+                                  <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                                    <MapPin className="h-3 w-3" />
                                     {activity.location}
                                   </p>
                                 )}
@@ -559,14 +720,17 @@ export function ItineraryContent({
                               <button
                                 type="button"
                                 onClick={() => toggleActivity(activityId)}
-                                aria-label={checked ? "Mark activity incomplete" : "Mark activity complete"}
-                                aria-pressed={checked}
-                                className="mt-1 shrink-0 rounded-full transition hover:scale-110"
+                                className="mt-1 shrink-0 text-slate-300 transition-colors hover:text-emerald-600"
+                                aria-label={
+                                  checked
+                                    ? "Mark activity incomplete"
+                                    : "Mark activity complete"
+                                }
                               >
                                 {checked ? (
                                   <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                                 ) : (
-                                  <Circle className="h-5 w-5 text-slate-300 group-hover:text-emerald-500" />
+                                  <Circle className="h-5 w-5" />
                                 )}
                               </button>
                             </div>
@@ -574,10 +738,26 @@ export function ItineraryContent({
                         })}
                       </div>
                     ) : (
-                      <div className="px-5 py-5 text-sm text-slate-500">
-                        {day.notes.length > 0
-                          ? day.notes.map((note, index) => <p key={index}>{note}</p>)
-                          : "No activities could be identified for this day."}
+                      <p className="p-5 text-sm text-slate-500">
+                        No structured activities were found for this day.
+                        Check the full itinerary below.
+                      </p>
+                    )}
+
+                    {day.notes.length > 0 && (
+                      <div className="border-t border-slate-100 bg-amber-50/50 px-4 py-3 sm:px-5">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                          Notes
+                        </p>
+
+                        {day.notes.map((note, index) => (
+                          <p
+                            key={index}
+                            className="text-xs leading-5 text-slate-600"
+                          >
+                            {note}
+                          </p>
+                        ))}
                       </div>
                     )}
                   </CardContent>
@@ -591,9 +771,11 @@ export function ItineraryContent({
                   <Sparkles className="h-4 w-4 text-emerald-600" />
                   Your travel plan
                 </div>
+
                 <p className="mb-3 text-xs leading-5 text-slate-500">
                   Your generated itinerary is shown below.
                 </p>
+
                 {formatContent(content)}
               </CardContent>
             </Card>
@@ -606,14 +788,23 @@ export function ItineraryContent({
                 <div className="rounded-lg bg-white p-2 text-emerald-700">
                   <CheckCircle2 className="h-5 w-5" />
                 </div>
+
                 <div className="min-w-0 flex-1">
                   <div className="mb-1.5 flex items-center justify-between">
-                    <p className="text-xs font-semibold text-slate-800">Your trip progress</p>
+                    <p className="text-xs font-semibold text-slate-800">
+                      Your trip progress
+                    </p>
+
                     <p className="text-xs font-bold text-emerald-800">
                       {checkedActivities.size}/{totalActivities}
                     </p>
                   </div>
-                  <Progress value={completionPercentage} className="h-2" />
+
+                  <Progress
+                    value={completionPercentage}
+                    className="h-2"
+                  />
+
                   <p className="mt-1.5 text-[10px] text-slate-500">
                     {completionPercentage === 100
                       ? "You've completed every planned activity. Amazing!"
@@ -624,17 +815,22 @@ export function ItineraryContent({
             </Card>
           )}
 
-          {/* A little extra touch */}
+          {/* Travel tip */}
           {dayPlans.length > 0 && (
             <div className="flex items-start gap-3 rounded-xl border border-amber-100 bg-amber-50/70 p-3.5">
               <div className="rounded-lg bg-white p-2 text-amber-600">
                 <Lightbulb className="h-4 w-4" />
               </div>
+
               <div>
-                <p className="text-xs font-semibold text-slate-800">A little travel tip</p>
+                <p className="text-xs font-semibold text-slate-800">
+                  A little travel tip
+                </p>
+
                 <p className="mt-0.5 text-xs leading-5 text-slate-600">
-                  Keep some room for spontaneous discoveries. The best travel memories
-                  sometimes happen between planned activities!
+                  Keep some room for spontaneous discoveries. The best
+                  travel memories sometimes happen between planned
+                  activities!
                 </p>
               </div>
             </div>
@@ -649,26 +845,61 @@ export function ItineraryContent({
                 <Compass className="h-4 w-4 text-emerald-600" />
                 Trip at a glance
               </CardTitle>
+
               <CardDescription className="text-xs">
                 Your travel details in one place.
               </CardDescription>
             </CardHeader>
+
             <CardContent className="grid gap-2.5 px-5 pb-5 sm:grid-cols-2">
               {[
-                { label: "Destination", value: destination, icon: MapPin },
-                { label: "Travel dates", value: `${formatDate(startDate)} – ${formatDate(endDate)}`, icon: CalendarDays },
-                { label: "Duration", value: `${tripDuration} days`, icon: Clock },
-                { label: "Group size", value: `${groupSize} travellers`, icon: Plane },
-                { label: "Total budget", value: `$${Number(budget).toLocaleString()}`, icon: Wallet },
-                { label: "Per person", value: `$${perPersonBudget.toLocaleString()}`, icon: DollarSign },
+                {
+                  label: "Destination",
+                  value: destination,
+                  icon: MapPin,
+                },
+                {
+                  label: "Travel dates",
+                  value: `${formatDate(startDate)} – ${formatDate(endDate)}`,
+                  icon: CalendarDays,
+                },
+                {
+                  label: "Duration",
+                  value: `${tripDuration} days`,
+                  icon: Clock,
+                },
+                {
+                  label: "Group size",
+                  value: `${groupSize} travellers`,
+                  icon: Plane,
+                },
+                {
+                  label: `Total budget (${currencyCode})`,
+                  value: formatMoney(totalBudget, currencySymbol),
+                  icon: Wallet,
+                },
+                {
+                  label: `Per person (${currencyCode})`,
+                  value: formatMoney(perPersonBudget, currencySymbol),
+                  icon: DollarSign,
+                },
               ].map((item) => (
-                <div key={item.label} className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
+                <div
+                  key={item.label}
+                  className="flex items-center gap-3 rounded-xl bg-slate-50 p-3"
+                >
                   <div className="rounded-lg bg-white p-2 text-emerald-700 shadow-sm">
                     <item.icon className="h-4 w-4" />
                   </div>
+
                   <div className="min-w-0">
-                    <p className="text-[11px] text-slate-500">{item.label}</p>
-                    <p className="truncate text-sm font-semibold text-slate-800">{item.value}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {item.label}
+                    </p>
+
+                    <p className="truncate text-sm font-semibold text-slate-800">
+                      {item.value}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -682,29 +913,44 @@ export function ItineraryContent({
                 Activity checklist
               </CardTitle>
             </CardHeader>
+
             <CardContent className="space-y-3 px-5 pb-5">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Activities completed</span>
+                <span className="text-slate-500">
+                  Activities completed
+                </span>
+
                 <span className="font-semibold text-slate-800">
                   {checkedActivities.size} of {totalActivities}
                 </span>
               </div>
-              <Progress value={completionPercentage} className="h-2" />
+
+              <Progress
+                value={completionPercentage}
+                className="h-2"
+              />
+
               <p className="text-xs text-slate-500">
                 {totalActivities === 0
                   ? "Your full itinerary is available in the Daily Plan tab."
-                  : `${Math.round(completionPercentage)}% of your planned experiences completed.`}
+                  : `${Math.round(
+                      completionPercentage
+                    )}% of your planned experiences completed.`}
               </p>
             </CardContent>
           </Card>
 
           <Card className="rounded-2xl border-slate-200 shadow-sm">
             <CardHeader className="px-5 py-4">
-              <CardTitle className="text-base">More travel notes</CardTitle>
+              <CardTitle className="text-base">
+                More travel notes
+              </CardTitle>
+
               <CardDescription className="text-xs">
                 Additional recommendations from your AI travel planner.
               </CardDescription>
             </CardHeader>
+
             <CardContent className="px-5 pb-5">
               {formatContent(content)}
             </CardContent>
@@ -718,19 +964,41 @@ export function ItineraryContent({
               <div className="rounded-xl bg-white/10 p-2.5">
                 <Wallet className="h-5 w-5 text-emerald-300" />
               </div>
+
               <div>
-                <p className="text-xs text-emerald-200">Total planned budget</p>
-                <p className="text-2xl font-bold">${Number(budget).toLocaleString()}</p>
+                <p className="text-xs text-emerald-200">
+                  Total planned budget ({currencyCode})
+                </p>
+
+                <p className="text-2xl font-bold">
+                  {formatMoney(totalBudget, currencySymbol)}
+                </p>
+
+                <p className="mt-1 text-xs text-emerald-100/70">
+                  INR equivalent: {formatMoney(originalInrBudget, "₹")}
+                </p>
               </div>
             </div>
+
             <div className="mt-4 flex gap-8 border-t border-white/10 pt-3">
               <div>
-                <p className="text-[11px] text-emerald-200/70">Per person</p>
-                <p className="mt-0.5 text-sm font-semibold">${perPersonBudget.toLocaleString()}</p>
+                <p className="text-[11px] text-emerald-200/70">
+                  Per person
+                </p>
+
+                <p className="mt-0.5 text-sm font-semibold">
+                  {formatMoney(perPersonBudget, currencySymbol)}
+                </p>
               </div>
+
               <div>
-                <p className="text-[11px] text-emerald-200/70">Travellers</p>
-                <p className="mt-0.5 text-sm font-semibold">{groupSize}</p>
+                <p className="text-[11px] text-emerald-200/70">
+                  Travellers
+                </p>
+
+                <p className="mt-0.5 text-sm font-semibold">
+                  {groupSize}
+                </p>
               </div>
             </div>
           </section>
@@ -739,27 +1007,43 @@ export function ItineraryContent({
             <div className="grid gap-3 sm:grid-cols-2">
               {budgetBreakdown.map((item) => {
                 const Icon = item.icon
-                const percentage = budget > 0 ? (item.amount / budget) * 100 : 0
+
+                const percentage =
+                  totalBudget > 0
+                    ? (item.amount / totalBudget) * 100
+                    : 0
 
                 return (
-                  <Card key={item.name} className="rounded-xl border-slate-200 shadow-sm">
+                  <Card
+                    key={item.name}
+                    className="rounded-xl border-slate-200 shadow-sm"
+                  >
                     <CardContent className="p-4">
                       <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
                             <Icon className="h-4 w-4" />
                           </div>
-                          <span className="text-xs font-semibold text-slate-800">{item.name}</span>
+
+                          <span className="text-xs font-semibold text-slate-800">
+                            {item.name}
+                          </span>
                         </div>
+
                         <span className="text-sm font-bold text-slate-900">
-                          ${item.amount.toLocaleString()}
+                          {formatMoney(item.amount, currencySymbol)}
                         </span>
                       </div>
+
                       <div className="mb-1.5 flex justify-between text-[10px] text-slate-500">
                         <span>Budget share</span>
                         <span>{percentage.toFixed(1)}%</span>
                       </div>
-                      <Progress value={Math.min(percentage, 100)} className="h-1.5" />
+
+                      <Progress
+                        value={Math.min(percentage, 100)}
+                        className="h-1.5"
+                      />
                     </CardContent>
                   </Card>
                 )
@@ -769,12 +1053,15 @@ export function ItineraryContent({
             <Card className="rounded-xl border-slate-200 shadow-sm">
               <CardContent className="p-6 text-center">
                 <Wallet className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+
                 <p className="text-sm font-semibold text-slate-800">
                   No structured budget breakdown found
                 </p>
+
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Category estimates will appear when your generated itinerary
-                  includes lines such as “Accommodation: $300”.
+                  Category estimates will appear when your generated
+                  itinerary includes lines such as
+                  {" "}Accommodation: €300.
                 </p>
               </CardContent>
             </Card>
@@ -782,11 +1069,15 @@ export function ItineraryContent({
 
           <div className="flex items-start gap-3 rounded-xl border border-amber-100 bg-amber-50/70 p-3.5">
             <ArrowUpRight className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+
             <div>
-              <p className="text-xs font-semibold text-slate-800">Budget reminder</p>
+              <p className="text-xs font-semibold text-slate-800">
+                Budget reminder
+              </p>
+
               <p className="mt-0.5 text-xs leading-5 text-slate-600">
-                These are estimates from your generated itinerary. Track your actual
-                spending separately in your Budget Manager.
+                These are estimates from your generated itinerary. Track
+                your actual spending separately in your Budget Manager.
               </p>
             </div>
           </div>
