@@ -1,4 +1,3 @@
-
 import { createServerClient } from "@/lib/supabase/server"
 import { cookies } from "next/headers"
 import { notFound, redirect } from "next/navigation"
@@ -11,13 +10,7 @@ import {
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { Badge } from "@/components/ui/badge"
 import {
-  DollarSign,
-  TrendingUp,
-  TrendingDown,
-  AlertTriangle,
-  PieChart,
   Receipt,
   ArrowLeft,
 } from "lucide-react"
@@ -57,12 +50,6 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
     notFound()
   }
 
-  // Fetch budget categories
-  const { data: budgetCategories } = await supabase
-    .from("budget_categories")
-    .select("*")
-    .eq("itinerary_id", params.id)
-
   // Fetch expenses
   const { data: expenses } = await supabase
     .from("expenses")
@@ -75,22 +62,10 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
   const currencySymbol = itinerary.currency_symbol || "₹"
   const currencyName = itinerary.currency_name || "Indian Rupee"
 
-  // exchange_rate_inr represents local currency received for ₹1
+  // Exchange rate: local currency received for ₹1
   const exchangeRateInr = Number(itinerary.exchange_rate_inr) || 1
 
-  // Budget values
-  const totalBudgetLocal =
-    Number(itinerary.local_budget ?? itinerary.budget ?? 0)
-
-  const totalBudgetInr =
-    Number(
-      itinerary.budget_inr ??
-        (exchangeRateInr > 0
-          ? totalBudgetLocal / exchangeRateInr
-          : totalBudgetLocal),
-    )
-
-  // Expenses are entered and stored in the destination's local currency
+  // Calculate total additional expenses
   const totalSpentLocal =
     expenses?.reduce(
       (sum, expense) => sum + (Number(expense.amount) || 0),
@@ -102,15 +77,7 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
       ? totalSpentLocal / exchangeRateInr
       : totalSpentLocal
 
-  const remainingBudgetLocal = totalBudgetLocal - totalSpentLocal
-  const remainingBudgetInr = totalBudgetInr - totalSpentInr
-
-  const spentPercentage =
-    totalBudgetLocal > 0
-      ? (totalSpentLocal / totalBudgetLocal) * 100
-      : 0
-
-  // Format local currency and INR
+  // Format local currency
   const formatLocal = (amount: number) => {
     try {
       return new Intl.NumberFormat("en", {
@@ -125,6 +92,7 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
     }
   }
 
+  // Format INR
   const formatINR = (amount: number) => {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
@@ -138,7 +106,9 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
     expenses?.reduce(
       (acc, expense) => {
         acc[expense.category] =
-          (acc[expense.category] || 0) + (Number(expense.amount) || 0)
+          (acc[expense.category] || 0) +
+          (Number(expense.amount) || 0)
+
         return acc
       },
       {} as Record<string, number>,
@@ -157,36 +127,10 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
     { key: "miscellaneous", label: "Miscellaneous", color: "bg-gray-500" },
   ]
 
-  const getBudgetStatus = () => {
-    if (spentPercentage >= 100) {
-      return {
-        status: "over",
-        color: "text-red-600",
-        icon: TrendingUp,
-      }
-    }
-
-    if (spentPercentage >= 80) {
-      return {
-        status: "warning",
-        color: "text-yellow-600",
-        icon: AlertTriangle,
-      }
-    }
-
-    return {
-      status: "good",
-      color: "text-green-600",
-      icon: TrendingDown,
-    }
-  }
-
-  const budgetStatus = getBudgetStatus()
-  const StatusIcon = budgetStatus.icon
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-cyan-50 to-blue-50 py-8">
       <div className="container mx-auto px-4 max-w-6xl">
+
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -210,7 +154,7 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
           </h1>
 
           <p className="text-xl text-gray-600">
-            {itinerary.destination} • Track your spending and stay on budget
+            {itinerary.destination} • Track your additional expenses
           </p>
 
           <p className="text-sm text-gray-500 mt-2">
@@ -219,42 +163,24 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
           </p>
         </div>
 
-        {/* Budget Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {/* Total Budget */}
+        {/* Total Additional Expenses */}
+        <div className="mb-8">
           <Card>
             <CardContent className="p-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <DollarSign className="h-5 w-5 text-blue-600" />
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-red-100 rounded-lg">
+                  <Receipt className="h-6 w-6 text-red-600" />
                 </div>
 
-                <div className="min-w-0">
-                  <p className="text-sm text-gray-600">Total Budget</p>
-                  <p className="text-2xl font-bold text-gray-900 break-words">
-                    {formatLocal(totalBudgetLocal)}
+                <div>
+                  <p className="text-sm text-gray-600">
+                    Total Additional Expenses
                   </p>
-                  <p className="text-sm text-gray-500">
-                    {formatINR(totalBudgetInr)}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
 
-          {/* Total Spent */}
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-red-100 rounded-lg">
-                  <Receipt className="h-5 w-5 text-red-600" />
-                </div>
-
-                <div className="min-w-0">
-                  <p className="text-sm text-gray-600">Total Spent</p>
-                  <p className="text-2xl font-bold text-gray-900 break-words">
+                  <p className="text-3xl font-bold text-gray-900">
                     {formatLocal(totalSpentLocal)}
                   </p>
+
                   <p className="text-sm text-gray-500">
                     {formatINR(totalSpentInr)}
                   </p>
@@ -262,130 +188,26 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
               </div>
             </CardContent>
           </Card>
-
-          {/* Remaining Budget */}
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`p-2 rounded-lg ${
-                    remainingBudgetLocal >= 0 ? "bg-green-100" : "bg-red-100"
-                  }`}
-                >
-                  <StatusIcon
-                    className={`h-5 w-5 ${
-                      remainingBudgetLocal >= 0
-                        ? "text-green-600"
-                        : "text-red-600"
-                    }`}
-                  />
-                </div>
-
-                <div className="min-w-0">
-                  <p className="text-sm text-gray-600">Remaining</p>
-                  <p
-                    className={`text-2xl font-bold break-words ${
-                      remainingBudgetLocal >= 0
-                        ? "text-green-600"
-                        : "text-red-600"
-                    }`}
-                  >
-                    {formatLocal(Math.abs(remainingBudgetLocal))}
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    {formatINR(Math.abs(remainingBudgetInr))}
-                  </p>
-                  {remainingBudgetLocal < 0 && (
-                    <p className="text-xs text-red-600">Over budget</p>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Budget Used */}
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-100 rounded-lg">
-                  <PieChart className="h-5 w-5 text-purple-600" />
-                </div>
-
-                <div>
-                  <p className="text-sm text-gray-600">Budget Used</p>
-                  <p className={`text-2xl font-bold ${budgetStatus.color}`}>
-                    {spentPercentage.toFixed(1)}%
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
-
-        {/* Budget Progress */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>Budget Progress</CardTitle>
-            <CardDescription>
-              Track your spending against your total budget in both currencies
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Overall Progress</span>
-
-                <Badge
-                  variant={
-                    spentPercentage >= 100
-                      ? "destructive"
-                      : spentPercentage >= 80
-                        ? "secondary"
-                        : "default"
-                  }
-                >
-                  {spentPercentage.toFixed(1)}% used
-                </Badge>
-              </div>
-
-              <Progress
-                value={Math.min(spentPercentage, 100)}
-                className="h-3"
-              />
-
-              <div className="flex justify-between text-sm text-gray-600">
-                <div>
-                  <p>{formatLocal(0)}</p>
-                  <p className="text-xs text-gray-500">{formatINR(0)}</p>
-                </div>
-
-                <div className="text-right">
-                  <p>{formatLocal(totalBudgetLocal)}</p>
-                  <p className="text-xs text-gray-500">
-                    {formatINR(totalBudgetInr)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
         {/* Category Breakdown & Recent Expenses */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
           {/* Category Spending */}
           <Card>
             <CardHeader>
               <CardTitle>Spending by Category</CardTitle>
               <CardDescription>
-                See how your money is allocated across different expense types
+                See how your additional expenses are distributed
               </CardDescription>
             </CardHeader>
 
             <CardContent>
               <div className="space-y-4">
                 {categories.map((category) => {
-                  const spentLocal = categorySpending[category.key] || 0
+                  const spentLocal =
+                    categorySpending[category.key] || 0
+
                   const spentInr =
                     exchangeRateInr > 0
                       ? spentLocal / exchangeRateInr
@@ -403,6 +225,7 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
                           <div
                             className={`w-3 h-3 rounded-full ${category.color}`}
                           />
+
                           <span className="text-sm font-medium">
                             {category.label}
                           </span>
@@ -412,13 +235,18 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
                           <p className="text-sm text-gray-700">
                             {formatLocal(spentLocal)}
                           </p>
+
                           <p className="text-xs text-gray-500">
-                            {formatINR(spentInr)} ({percentage.toFixed(1)}%)
+                            {formatINR(spentInr)} (
+                            {percentage.toFixed(1)}%)
                           </p>
                         </div>
                       </div>
 
-                      <Progress value={percentage} className="h-2" />
+                      <Progress
+                        value={percentage}
+                        className="h-2"
+                      />
                     </div>
                   )
                 })}
@@ -433,7 +261,7 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
                 <div>
                   <CardTitle>Recent Expenses</CardTitle>
                   <CardDescription>
-                    Your latest spending activity
+                    Your latest additional expenses
                   </CardDescription>
                 </div>
 
@@ -454,6 +282,7 @@ export default async function BudgetPage({ params }: BudgetPageProps) {
               />
             </CardContent>
           </Card>
+
         </div>
       </div>
     </div>
